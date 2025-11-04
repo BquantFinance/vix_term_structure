@@ -963,7 +963,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; padding: 2rem 0 1rem 0;'>
         <h1 style='font-size: 3rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #64b5f6 0%, #ba68c8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;'>
-            📊 VIX Term Structure
+            VIX Term Structure
         </h1>
         <p style='font-size: 1.1rem; color: #a0a8c5; font-weight: 500; letter-spacing: 1px;'>
             Análisis Avanzado de Volatilidad - Vista Híbrida Mejorada
