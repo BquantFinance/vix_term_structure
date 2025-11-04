@@ -659,42 +659,55 @@ def plot_historical_spread(stats_df, window=20):
     """Graficar spread histórico M1-M2 con promedio móvil"""
     fig = go.Figure()
     
-    stats_df = stats_df.sort_values('date')
-    stats_df['spread_ma'] = stats_df['spread'].rolling(window=window).mean()
-    
-    # Color basado en contango/backwardation
-    colors = ['#ef5350' if s == 'Contango' else '#26a69a' for s in stats_df['state']]
-    
-    # Añadir scatter
-    fig.add_trace(go.Scatter(
-        x=stats_df['date'],
-        y=stats_df['spread'],
-        mode='markers',
-        name='Spread M1-M2',
-        marker=dict(
-            size=4,
-            color=colors,
-            opacity=0.5,
-            line=dict(width=0)
-        ),
-        hovertemplate='<b>Fecha:</b> %{x}<br><b>Spread:</b> %{y:.2f}<extra></extra>'
-    ))
-    
-    # Añadir promedio móvil
-    fig.add_trace(go.Scatter(
-        x=stats_df['date'],
-        y=stats_df['spread_ma'],
-        mode='lines',
-        name=f'Media Móvil {window} días',
-        line=dict(
-            color='#ffb74d',
-            width=3,
-            shape='spline'
-        ),
-        hovertemplate='<b>Fecha:</b> %{x}<br><b>MA:</b> %{y:.2f}<extra></extra>'
-    ))
-    
-    fig.add_hline(y=0, line_dash="solid", line_color="rgba(139, 146, 176, 0.3)", line_width=1)
+    if len(stats_df) == 0:
+        fig.add_annotation(
+            text="No hay datos históricos disponibles",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            showarrow=False,
+            font=dict(size=14, color='#a0a8c5'),
+            bgcolor='rgba(30, 33, 48, 0.6)',
+            bordercolor='#64b5f6',
+            borderwidth=1,
+            borderpad=10
+        )
+    else:
+        stats_df = stats_df.sort_values('date').copy()
+        stats_df['spread_ma'] = stats_df['spread'].rolling(window=window).mean()
+        
+        # Color basado en contango/backwardation
+        colors = ['#ef5350' if s == 'Contango' else '#26a69a' for s in stats_df['state']]
+        
+        # Añadir scatter
+        fig.add_trace(go.Scatter(
+            x=stats_df['date'],
+            y=stats_df['spread'],
+            mode='markers',
+            name='Spread M1-M2',
+            marker=dict(
+                size=4,
+                color=colors,
+                opacity=0.5,
+                line=dict(width=0)
+            ),
+            hovertemplate='<b>Fecha:</b> %{x}<br><b>Spread:</b> %{y:.2f}<extra></extra>'
+        ))
+        
+        # Añadir promedio móvil
+        fig.add_trace(go.Scatter(
+            x=stats_df['date'],
+            y=stats_df['spread_ma'],
+            mode='lines',
+            name=f'Media Móvil {window} días',
+            line=dict(
+                color='#ffb74d',
+                width=3,
+                shape='spline'
+            ),
+            hovertemplate='<b>Fecha:</b> %{x}<br><b>MA:</b> %{y:.2f}<extra></extra>'
+        ))
+        
+        fig.add_hline(y=0, line_dash="solid", line_color="rgba(139, 146, 176, 0.3)", line_width=1)
     
     fig.update_layout(
         title="Spread M1-M2 en el Tiempo",
@@ -818,18 +831,33 @@ def plot_roll_yield_history(df, lookback_days=252):
     
     fig = go.Figure()
     
-    fig.add_trace(go.Scatter(
-        x=ry_df['date'],
-        y=ry_df['monthly'],
-        mode='lines',
-        name='Roll Yield Mensual %',
-        line=dict(color='#ba68c8', width=3, shape='spline'),
-        fill='tozeroy',
-        fillcolor='rgba(186, 104, 200, 0.15)',
-        hovertemplate='<b>Fecha:</b> %{x}<br><b>Mensual:</b> %{y:.2f}%<extra></extra>'
-    ))
-    
-    fig.add_hline(y=0, line_dash="solid", line_color="rgba(139, 146, 176, 0.3)", line_width=2)
+    # Check if we have data
+    if len(ry_df) > 0 and 'date' in ry_df.columns:
+        fig.add_trace(go.Scatter(
+            x=ry_df['date'],
+            y=ry_df['monthly'],
+            mode='lines',
+            name='Roll Yield Mensual %',
+            line=dict(color='#ba68c8', width=3, shape='spline'),
+            fill='tozeroy',
+            fillcolor='rgba(186, 104, 200, 0.15)',
+            hovertemplate='<b>Fecha:</b> %{x}<br><b>Mensual:</b> %{y:.2f}%<extra></extra>'
+        ))
+        
+        fig.add_hline(y=0, line_dash="solid", line_color="rgba(139, 146, 176, 0.3)", line_width=2)
+    else:
+        # Add empty trace with message
+        fig.add_annotation(
+            text="No hay datos de Roll Yield disponibles para este período",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            showarrow=False,
+            font=dict(size=14, color='#a0a8c5'),
+            bgcolor='rgba(30, 33, 48, 0.6)',
+            bordercolor='#64b5f6',
+            borderwidth=1,
+            borderpad=10
+        )
     
     fig.update_layout(
         title=f"Historial de Roll Yield (Últimos {lookback_days} Días)",
@@ -848,61 +876,74 @@ def plot_roll_yield_history(df, lookback_days=252):
 
 def plot_zscore_analysis(stats_df, window=252):
     """Graficar z-score del spread M1-M2"""
-    stats_df = stats_df.sort_values('date').copy()
-    stats_df['spread_mean'] = stats_df['spread'].rolling(window=window).mean()
-    stats_df['spread_std'] = stats_df['spread'].rolling(window=window).std()
-    stats_df['zscore'] = (stats_df['spread'] - stats_df['spread_mean']) / stats_df['spread_std']
-    
     fig = go.Figure()
     
-    # Color basado en magnitud del z-score
-    colors = ['#ef5350' if z > 2 else '#26a69a' if z < -2 else '#64b5f6' 
-              for z in stats_df['zscore'].fillna(0)]
-    
-    fig.add_trace(go.Scatter(
-        x=stats_df['date'],
-        y=stats_df['zscore'],
-        mode='markers',
-        name='Z-Score',
-        marker=dict(
-            size=4,
-            color=colors,
-            opacity=0.5,
-            line=dict(width=0)
-        ),
-        hovertemplate='<b>Fecha:</b> %{x}<br><b>Z-Score:</b> %{y:.2f}<extra></extra>'
-    ))
-    
-    # Añadir líneas de umbral
-    fig.add_hline(
-        y=2, 
-        line_dash="dash", 
-        line_color="#ef5350", 
-        line_width=2,
-        opacity=0.6,
-        annotation_text="  Contango Extremo (+2σ)  ",
-        annotation=dict(
-            bgcolor="rgba(239, 83, 80, 0.1)",
-            bordercolor="#ef5350",
+    if len(stats_df) < window:
+        fig.add_annotation(
+            text=f"No hay suficientes datos para calcular Z-Score (requiere al menos {window} días)",
+            xref="paper", yref="paper",
+            x=0.5, y=0.5,
+            showarrow=False,
+            font=dict(size=14, color='#a0a8c5'),
+            bgcolor='rgba(30, 33, 48, 0.6)',
+            bordercolor='#64b5f6',
             borderwidth=1,
-            font=dict(color="#ef5350", size=10)
+            borderpad=10
         )
-    )
-    fig.add_hline(
-        y=-2, 
-        line_dash="dash", 
-        line_color="#26a69a", 
-        line_width=2,
-        opacity=0.6,
-        annotation_text="  Backwardation Extremo (-2σ)  ",
-        annotation=dict(
-            bgcolor="rgba(38, 166, 154, 0.1)",
-            bordercolor="#26a69a",
-            borderwidth=1,
-            font=dict(color="#26a69a", size=10)
+    else:
+        stats_df = stats_df.sort_values('date').copy()
+        stats_df['spread_mean'] = stats_df['spread'].rolling(window=window).mean()
+        stats_df['spread_std'] = stats_df['spread'].rolling(window=window).std()
+        stats_df['zscore'] = (stats_df['spread'] - stats_df['spread_mean']) / stats_df['spread_std']
+        
+        # Color basado en magnitud del z-score
+        colors = ['#ef5350' if z > 2 else '#26a69a' if z < -2 else '#64b5f6' 
+                  for z in stats_df['zscore'].fillna(0)]
+        
+        fig.add_trace(go.Scatter(
+            x=stats_df['date'],
+            y=stats_df['zscore'],
+            mode='markers',
+            name='Z-Score',
+            marker=dict(
+                size=4,
+                color=colors,
+                opacity=0.5,
+                line=dict(width=0)
+            ),
+            hovertemplate='<b>Fecha:</b> %{x}<br><b>Z-Score:</b> %{y:.2f}<extra></extra>'
+        ))
+        
+        # Añadir líneas de umbral
+        fig.add_hline(
+            y=2, 
+            line_dash="dash", 
+            line_color="#ef5350", 
+            line_width=2,
+            opacity=0.6,
+            annotation_text="  Contango Extremo (+2σ)  ",
+            annotation=dict(
+                bgcolor="rgba(239, 83, 80, 0.1)",
+                bordercolor="#ef5350",
+                borderwidth=1,
+                font=dict(color="#ef5350", size=10)
+            )
         )
-    )
-    fig.add_hline(y=0, line_dash="solid", line_color="rgba(139, 146, 176, 0.3)", line_width=1)
+        fig.add_hline(
+            y=-2, 
+            line_dash="dash", 
+            line_color="#26a69a", 
+            line_width=2,
+            opacity=0.6,
+            annotation_text="  Backwardation Extremo (-2σ)  ",
+            annotation=dict(
+                bgcolor="rgba(38, 166, 154, 0.1)",
+                bordercolor="#26a69a",
+                borderwidth=1,
+                font=dict(color="#26a69a", size=10)
+            )
+        )
+        fig.add_hline(y=0, line_dash="solid", line_color="rgba(139, 146, 176, 0.3)", line_width=1)
     
     fig.update_layout(
         title=f"Z-Score de Estructura de Términos (Rolling {window} días)",
@@ -963,7 +1004,7 @@ def main():
     st.markdown("""
     <div style='text-align: center; padding: 2rem 0 1rem 0;'>
         <h1 style='font-size: 3rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #64b5f6 0%, #ba68c8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;'>
-            VIX Term Structure
+            📊 VIX Term Structure
         </h1>
         <p style='font-size: 1.1rem; color: #a0a8c5; font-weight: 500; letter-spacing: 1px;'>
             Análisis Avanzado de Volatilidad - Vista Híbrida Mejorada
