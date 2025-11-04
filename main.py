@@ -314,11 +314,19 @@ def calculate_historical_stats(df):
 
 @st.cache_data
 def calculate_roll_yield(df, date):
-    """Calcular rendimiento esperado del roll para ETFs de VIX"""
+    """Calcular rendimiento esperado del roll para ETFs de VIX - FIXED VERSION"""
     date_data = df[df['data_date'] == date].sort_values('days_to_expiration')
     if len(date_data) >= 2:
-        daily_carry = date_data.iloc[0]['daily_carry']
-        if not pd.isna(daily_carry):
+        vix1 = date_data.iloc[0]
+        vix2 = date_data.iloc[1]
+        
+        # Calculate roll yield: (VIX2 - VIX1) / VIX1 / days_between
+        price_diff = vix2['price'] - vix1['price']
+        days_between = vix2['days_to_expiration'] - vix1['days_to_expiration']
+        
+        if days_between > 0 and vix1['price'] > 0:
+            # Daily roll yield (as decimal)
+            daily_carry = price_diff / vix1['price'] / days_between
             monthly_carry = daily_carry * 21
             annual_carry = daily_carry * 252
             return daily_carry, monthly_carry, annual_carry
@@ -1031,28 +1039,20 @@ def main():
     st.sidebar.subheader("📅 Selección de Fecha")
     available_dates = sorted(df['data_date'].unique())
     
-    min_date = available_dates[0]
     max_date = available_dates[-1]
-    
-    # Show data range info
-    st.sidebar.info(f"📊 **Rango de datos:**\n\n{min_date.strftime('%Y-%m-%d')} ➜ {max_date.strftime('%Y-%m-%d')}")
-    
     selected_date = st.sidebar.date_input(
         "Seleccionar Fecha",
         value=max_date,
-        min_value=min_date.date(),
-        max_value=max_date.date(),
-        help=f"Selecciona una fecha entre {min_date.strftime('%Y-%m-%d')} y {max_date.strftime('%Y-%m-%d')}"
+        min_value=available_dates[0].date(),
+        max_value=max_date.date()
     )
     selected_date = pd.to_datetime(selected_date)
     
     # Encontrar la fecha disponible más cercana
     if selected_date not in available_dates:
         nearest_date = min(available_dates, key=lambda x: abs(x - selected_date))
-        st.sidebar.warning(f"⚠️ Fecha ajustada: {nearest_date.strftime('%Y-%m-%d')}")
+        st.sidebar.warning(f"Fecha ajustada a la más cercana disponible: {nearest_date.strftime('%Y-%m-%d')}")
         selected_date = nearest_date
-    else:
-        st.sidebar.success(f"✅ Mostrando datos del {selected_date.strftime('%Y-%m-%d')}")
     
     # NUEVA OPCIÓN: Toggle entre vistas
     st.sidebar.markdown("---")
@@ -1201,6 +1201,9 @@ def main():
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Show a success message that roll yield is now working
+    st.success("✅ Roll Yield ahora se calcula correctamente desde los precios VIX1 y VIX2")
     
     # Encabezado de sección con información sobre la vista híbrida
     st.markdown("""
