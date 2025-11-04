@@ -1031,20 +1031,28 @@ def main():
     st.sidebar.subheader("📅 Selección de Fecha")
     available_dates = sorted(df['data_date'].unique())
     
+    min_date = available_dates[0]
     max_date = available_dates[-1]
+    
+    # Show data range info
+    st.sidebar.info(f"📊 **Rango de datos:**\n\n{min_date.strftime('%Y-%m-%d')} ➜ {max_date.strftime('%Y-%m-%d')}")
+    
     selected_date = st.sidebar.date_input(
         "Seleccionar Fecha",
         value=max_date,
-        min_value=available_dates[0].date(),
-        max_value=max_date.date()
+        min_value=min_date.date(),
+        max_value=max_date.date(),
+        help=f"Selecciona una fecha entre {min_date.strftime('%Y-%m-%d')} y {max_date.strftime('%Y-%m-%d')}"
     )
     selected_date = pd.to_datetime(selected_date)
     
     # Encontrar la fecha disponible más cercana
     if selected_date not in available_dates:
         nearest_date = min(available_dates, key=lambda x: abs(x - selected_date))
-        st.sidebar.warning(f"Fecha ajustada a la más cercana disponible: {nearest_date.strftime('%Y-%m-%d')}")
+        st.sidebar.warning(f"⚠️ Fecha ajustada: {nearest_date.strftime('%Y-%m-%d')}")
         selected_date = nearest_date
+    else:
+        st.sidebar.success(f"✅ Mostrando datos del {selected_date.strftime('%Y-%m-%d')}")
     
     # NUEVA OPCIÓN: Toggle entre vistas
     st.sidebar.markdown("---")
