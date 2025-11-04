@@ -257,6 +257,15 @@ st.markdown("""
     .stSpinner > div {
         border-top-color: #64b5f6 !important;
     }
+    
+    /* Toggle switch style */
+    .stRadio > label {
+        background-color: rgba(30, 33, 48, 0.6);
+        padding: 10px 15px;
+        border-radius: 10px;
+        display: inline-block;
+        margin-right: 10px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -346,36 +355,6 @@ def find_extreme_days(stats_df, n=10):
     return top_contango, top_backwardation, top_changes
 
 @st.cache_data
-def simulate_vxx_performance(df, start_date, end_date, initial_capital=10000):
-    """Simular rendimiento de VXX usando datos de carry diario"""
-    filtered_df = df[(df['data_date'] >= start_date) & (df['data_date'] <= end_date)].copy()
-    filtered_df = filtered_df.sort_values('data_date')
-    
-    # Obtener carry diario para VIX1
-    daily_carries = []
-    dates = []
-    
-    for date in filtered_df['data_date'].unique():
-        date_data = filtered_df[filtered_df['data_date'] == date].sort_values('days_to_expiration')
-        if len(date_data) >= 1 and not pd.isna(date_data.iloc[0]['daily_carry']):
-            daily_carries.append(date_data.iloc[0]['daily_carry'])
-            dates.append(date)
-    
-    # Simular valor de la cartera
-    portfolio_values = [initial_capital]
-    for carry in daily_carries:
-        # VXX pierde el carry diario en contango, gana en backwardation
-        new_value = portfolio_values[-1] * (1 - carry)
-        portfolio_values.append(new_value)
-    
-    return pd.DataFrame({
-        'date': [start_date] + dates,
-        'value': portfolio_values,
-        'return': [0] + [((portfolio_values[i] / portfolio_values[i-1]) - 1) * 100 
-                         for i in range(1, len(portfolio_values))]
-    })
-
-@st.cache_data
 def calculate_seasonality(stats_df):
     """Calcular patrones estacionales"""
     stats_df = stats_df.copy()
@@ -397,20 +376,36 @@ def calculate_seasonality(stats_df):
     
     return monthly_stats
 
-def plot_term_structure(df, selected_date, comparison_dates=None, show_spot=True):
-    """Graficar curva de estructura de términos VIX con estilo mejorado"""
+def plot_term_structure(df, selected_date, comparison_dates=None, show_spot=True, use_contract_labels=False):
+    """Graficar curva de estructura de términos VIX - VERSIÓN HÍBRIDA MEJORADA"""
     fig = go.Figure()
     
     # Fecha principal
-    date_data = df[df['data_date'] == selected_date].sort_values('days_to_expiration')
+    date_data = df[df['data_date'] == selected_date].sort_values('days_to_expiration').copy()
     
     if not date_data.empty:
         state, slope, vix1, vix2 = calculate_market_state(df, selected_date)
         color = '#ef5350' if state == 'Contango' else '#26a69a'
         
+        # Calcular porcentajes de cambio y gaps
+        date_data['pct_change'] = date_data['price'].pct_change() * 100
+        date_data['days_gap'] = date_data['days_to_expiration'].diff()
+        
+        # Determinar X-axis basado en la preferencia del usuario
+        if use_contract_labels:
+            # Usar posiciones de contratos (0, 1, 2, 3...)
+            x_values = list(range(len(date_data)))
+            x_axis_title = "Contrato"
+            hover_x_label = "Contrato"
+        else:
+            # Usar días hasta vencimiento (default, más preciso)
+            x_values = date_data['days_to_expiration'].tolist()
+            x_axis_title = "Días hasta Vencimiento"
+            hover_x_label = "Días"
+        
         # Añadir área rellena bajo la curva
         fig.add_trace(go.Scatter(
-            x=date_data['days_to_expiration'],
+            x=x_values,
             y=date_data['price'],
             fill='tozeroy',
             fillcolor=f'rgba({int(color[1:3], 16)}, {int(color[3:5], 16)}, {int(color[5:7], 16)}, 0.1)',
@@ -419,26 +414,84 @@ def plot_term_structure(df, selected_date, comparison_dates=None, show_spot=True
             hoverinfo='skip'
         ))
         
+        # Crear hover text personalizado
+        hover_texts = []
+        for i, row in date_data.iterrows():
+            hover_text = (
+                f"<b>{row['symbol']}</b><br>"
+                f"Días hasta vencimiento: {row['days_to_expiration']:.0f}<br>"
+                f"Precio: ${row['price']:.2f}<br>"
+                f"Vencimiento: {row['expiration_date'].strftime('%Y-%m-%d')}"
+            )
+            hover_texts.append(hover_text)
+        
         # Línea principal con marcadores
         fig.add_trace(go.Scatter(
-            x=date_data['days_to_expiration'],
+            x=x_values,
             y=date_data['price'],
             mode='lines+markers',
             name=f"{selected_date.strftime('%Y-%m-%d')} ({state})",
             line=dict(color=color, width=4, shape='spline'),
-            marker=dict(size=10, color=color, line=dict(color='white', width=2)),
-            hovertemplate='<b>Días hasta venc.:</b> %{x}<br><b>Precio:</b> %{y:.2f}<extra></extra>'
+            marker=dict(size=12, color=color, line=dict(color='white', width=2)),
+            text=hover_texts,
+            hovertemplate='%{text}<extra></extra>'
         ))
+        
+        # Añadir etiquetas de contratos en cada punto
+        for idx, (i, row) in enumerate(date_data.iterrows()):
+            x_pos = x_values[idx]
+            y_pos = row['price']
+            
+            # Etiqueta del contrato (siempre se muestra)
+            fig.add_annotation(
+                x=x_pos,
+                y=y_pos,
+                text=f"<b>{row['symbol']}</b>",
+                showarrow=False,
+                font=dict(size=10, color='white', family='Arial Black'),
+                bgcolor='rgba(0, 0, 0, 0.6)',
+                bordercolor='white',
+                borderwidth=1,
+                borderpad=3,
+                yshift=-25
+            )
+        
+        # Añadir etiquetas de porcentaje CON información de gap temporal
+        for idx in range(1, len(date_data)):
+            pct = date_data.iloc[idx]['pct_change']
+            days_gap = date_data.iloc[idx]['days_gap']
+            x_pos = x_values[idx]
+            y_pos = date_data.iloc[idx]['price']
+            
+            # Posición de la etiqueta (arriba del punto)
+            y_offset = 0.4
+            
+            # Mostrar porcentaje Y días gap (información crítica)
+            label_text = f"{pct:+.2f}%<br><span style='font-size:9px'>({days_gap:.0f}d)</span>"
+            
+            fig.add_annotation(
+                x=x_pos,
+                y=y_pos + y_offset,
+                text=label_text,
+                showarrow=False,
+                font=dict(size=11, color='white', family='Arial'),
+                bgcolor=color,
+                bordercolor='white',
+                borderwidth=1.5,
+                borderpad=5,
+                opacity=0.95
+            )
         
         # Añadir referencia VIX spot
         if show_spot:
             spot_vix = date_data.iloc[0]['price']
+            spot_days = date_data.iloc[0]['days_to_expiration']
             fig.add_hline(
                 y=spot_vix, 
                 line_dash="dash", 
                 line_color="#ffb74d",
                 line_width=2,
-                annotation_text=f"  VIX1: {spot_vix:.2f}  ",
+                annotation_text=f"  VIX SPOT: {spot_vix:.2f} ({spot_days:.0f}d)  ",
                 annotation_position="right",
                 annotation=dict(
                     bgcolor="rgba(255, 183, 77, 0.2)",
@@ -449,29 +502,59 @@ def plot_term_structure(df, selected_date, comparison_dates=None, show_spot=True
                 )
             )
     
-    # Fechas de comparación con estilo mejorado
+    # Fechas de comparación
     if comparison_dates:
-        colors = ['#64b5f6', '#ba68c8', '#4db6ac', '#ff8a65']
+        colors_comp = ['#64b5f6', '#ba68c8', '#4db6ac', '#ff8a65']
         for i, comp_date in enumerate(comparison_dates):
-            comp_data = df[df['data_date'] == comp_date].sort_values('days_to_expiration')
+            comp_data = df[df['data_date'] == comp_date].sort_values('days_to_expiration').copy()
             if not comp_data.empty:
+                if use_contract_labels:
+                    x_comp = list(range(len(comp_data)))
+                else:
+                    x_comp = comp_data['days_to_expiration'].tolist()
+                
+                # Crear hover text para comparación
+                hover_texts_comp = []
+                for j, row in comp_data.iterrows():
+                    hover_text = (
+                        f"<b>{row['symbol']}</b><br>"
+                        f"Días: {row['days_to_expiration']:.0f}<br>"
+                        f"Precio: ${row['price']:.2f}"
+                    )
+                    hover_texts_comp.append(hover_text)
+                
                 fig.add_trace(go.Scatter(
-                    x=comp_data['days_to_expiration'],
+                    x=x_comp,
                     y=comp_data['price'],
                     mode='lines+markers',
                     name=comp_date.strftime('%Y-%m-%d'),
-                    line=dict(color=colors[i % len(colors)], width=3, dash='dot', shape='spline'),
-                    marker=dict(size=7, line=dict(color='white', width=1)),
-                    opacity=0.8,
-                    hovertemplate='<b>Días hasta venc.:</b> %{x}<br><b>Precio:</b> %{y:.2f}<extra></extra>'
+                    line=dict(color=colors_comp[i % len(colors_comp)], width=3, dash='dot', shape='spline'),
+                    marker=dict(size=8, line=dict(color='white', width=1)),
+                    opacity=0.7,
+                    text=hover_texts_comp,
+                    hovertemplate='%{text}<extra></extra>'
                 ))
+    
+    # Configurar el eje X apropiadamente
+    if use_contract_labels:
+        # Para vista de contratos, usar labels categóricos
+        contract_labels = date_data['symbol'].tolist()
+        fig.update_xaxes(
+            tickmode='array',
+            tickvals=list(range(len(contract_labels))),
+            ticktext=contract_labels,
+            tickangle=-45
+        )
+    
+    # Título dinámico que indica el modo
+    view_mode = "Vista por Contratos" if use_contract_labels else "Vista por Días (Recomendado)"
     
     fig.update_layout(
         title={
-            'text': f"Estructura de Términos VIX - {selected_date.strftime('%d de %B, %Y')}",
-            'font': {'size': 22, 'color': '#ffffff', 'family': 'Arial'}
+            'text': f"Estructura de Términos VIX - {selected_date.strftime('%d de %B, %Y')}<br><sub>{view_mode}</sub>",
+            'font': {'size': 20, 'color': '#ffffff', 'family': 'Arial'}
         },
-        xaxis_title="Días hasta Vencimiento",
+        xaxis_title=x_axis_title,
         yaxis_title="Precio de Futuros VIX",
         plot_bgcolor='rgba(30, 33, 48, 0.4)',
         paper_bgcolor='rgba(0, 0, 0, 0)',
@@ -480,7 +563,7 @@ def plot_term_structure(df, selected_date, comparison_dates=None, show_spot=True
             gridcolor='rgba(139, 146, 176, 0.1)',
             showgrid=True,
             zeroline=False,
-            tickfont=dict(size=11)
+            tickfont=dict(size=11, color='#ffffff')
         ),
         yaxis=dict(
             gridcolor='rgba(139, 146, 176, 0.1)',
@@ -488,15 +571,15 @@ def plot_term_structure(df, selected_date, comparison_dates=None, show_spot=True
             zeroline=False,
             tickfont=dict(size=11)
         ),
-        hovermode='x unified',
+        hovermode='closest',
         legend=dict(
             bgcolor='rgba(30, 33, 48, 0.8)',
             bordercolor='rgba(100, 181, 246, 0.3)',
             borderwidth=1,
             font=dict(size=11)
         ),
-        height=550,
-        margin=dict(t=60, b=60, l=60, r=60)
+        height=650,
+        margin=dict(t=100, b=80, l=60, r=60)
     )
     
     return fig
@@ -572,58 +655,8 @@ def plot_seasonality(monthly_stats):
     
     return fig
 
-def plot_vxx_simulation(sim_df):
-    """Graficar simulación de rendimiento VXX"""
-    fig = make_subplots(
-        rows=2, cols=1,
-        subplot_titles=('Valor de la Cartera VXX', 'Retornos Diarios (%)'),
-        row_heights=[0.7, 0.3],
-        vertical_spacing=0.1
-    )
-    
-    # Valor de la cartera
-    fig.add_trace(
-        go.Scatter(
-            x=sim_df['date'],
-            y=sim_df['value'],
-            mode='lines',
-            name='Valor de Cartera',
-            line=dict(color='#ef5350', width=3),
-            fill='tozeroy',
-            fillcolor='rgba(239, 83, 80, 0.1)',
-            hovertemplate='<b>Fecha:</b> %{x}<br><b>Valor:</b> $%{y:,.2f}<extra></extra>'
-        ),
-        row=1, col=1
-    )
-    
-    # Retornos diarios
-    colors = ['#26a69a' if r >= 0 else '#ef5350' for r in sim_df['return']]
-    fig.add_trace(
-        go.Bar(
-            x=sim_df['date'],
-            y=sim_df['return'],
-            marker_color=colors,
-            name='Retorno Diario',
-            hovertemplate='<b>Fecha:</b> %{x}<br><b>Retorno:</b> %{y:.2f}%<extra></extra>'
-        ),
-        row=2, col=1
-    )
-    
-    fig.update_layout(
-        height=600,
-        showlegend=False,
-        plot_bgcolor='rgba(30, 33, 48, 0.4)',
-        paper_bgcolor='rgba(0, 0, 0, 0)',
-        font=dict(color='#a0a8c5', family='Arial')
-    )
-    
-    fig.update_xaxes(gridcolor='rgba(139, 146, 176, 0.1)')
-    fig.update_yaxes(gridcolor='rgba(139, 146, 176, 0.1)')
-    
-    return fig
-
 def plot_historical_spread(stats_df, window=20):
-    """Graficar spread histórico M1-M2 con promedio móvil - estilo mejorado"""
+    """Graficar spread histórico M1-M2 con promedio móvil"""
     fig = go.Figure()
     
     stats_df = stats_df.sort_values('date')
@@ -632,7 +665,7 @@ def plot_historical_spread(stats_df, window=20):
     # Color basado en contango/backwardation
     colors = ['#ef5350' if s == 'Contango' else '#26a69a' for s in stats_df['state']]
     
-    # Añadir scatter con efecto gradiente
+    # Añadir scatter
     fig.add_trace(go.Scatter(
         x=stats_df['date'],
         y=stats_df['spread'],
@@ -647,7 +680,7 @@ def plot_historical_spread(stats_df, window=20):
         hovertemplate='<b>Fecha:</b> %{x}<br><b>Spread:</b> %{y:.2f}<extra></extra>'
     ))
     
-    # Añadir promedio móvil con estilo gradiente
+    # Añadir promedio móvil
     fig.add_trace(go.Scatter(
         x=stats_df['date'],
         y=stats_df['spread_ma'],
@@ -684,7 +717,7 @@ def plot_historical_spread(stats_df, window=20):
     return fig
 
 def plot_market_state_distribution(stats_df):
-    """Graficar distribución de contango vs backwardation - estilo mejorado"""
+    """Graficar distribución de contango vs backwardation"""
     state_counts = stats_df['state'].value_counts()
     
     colors = ['#ef5350' if x == 'Contango' else '#26a69a' for x in state_counts.index]
@@ -721,7 +754,7 @@ def plot_market_state_distribution(stats_df):
     return fig
 
 def plot_spread_distribution(stats_df):
-    """Graficar distribución de spreads M1-M2 - estilo mejorado"""
+    """Graficar distribución de spreads M1-M2"""
     fig = go.Figure()
     
     fig.add_trace(go.Histogram(
@@ -736,7 +769,7 @@ def plot_spread_distribution(stats_df):
         hovertemplate='<b>Rango de Spread:</b> %{x}<br><b>Conteo:</b> %{y}<extra></extra>'
     ))
     
-    # Añadir línea de media con anotación mejorada
+    # Añadir línea de media
     mean_spread = stats_df['spread'].mean()
     fig.add_vline(
         x=mean_spread, 
@@ -767,7 +800,7 @@ def plot_spread_distribution(stats_df):
     return fig
 
 def plot_roll_yield_history(df, lookback_days=252):
-    """Graficar historial de roll yield en el tiempo - estilo mejorado"""
+    """Graficar historial de roll yield en el tiempo"""
     dates = sorted(df['data_date'].unique())[-lookback_days:]
     
     roll_yields = []
@@ -814,7 +847,7 @@ def plot_roll_yield_history(df, lookback_days=252):
     return fig
 
 def plot_zscore_analysis(stats_df, window=252):
-    """Graficar z-score del spread M1-M2 - estilo mejorado"""
+    """Graficar z-score del spread M1-M2"""
     stats_df = stats_df.sort_values('date').copy()
     stats_df['spread_mean'] = stats_df['spread'].rolling(window=window).mean()
     stats_df['spread_std'] = stats_df['spread'].rolling(window=window).std()
@@ -822,7 +855,7 @@ def plot_zscore_analysis(stats_df, window=252):
     
     fig = go.Figure()
     
-    # Color basado en magnitud del z-score con gradiente
+    # Color basado en magnitud del z-score
     colors = ['#ef5350' if z > 2 else '#26a69a' if z < -2 else '#64b5f6' 
               for z in stats_df['zscore'].fillna(0)]
     
@@ -840,7 +873,7 @@ def plot_zscore_analysis(stats_df, window=252):
         hovertemplate='<b>Fecha:</b> %{x}<br><b>Z-Score:</b> %{y:.2f}<extra></extra>'
     ))
     
-    # Añadir líneas de umbral con estilo mejorado
+    # Añadir líneas de umbral
     fig.add_hline(
         y=2, 
         line_dash="dash", 
@@ -926,14 +959,14 @@ def plot_heatmap_calendar(df, year):
 
 # Aplicación principal
 def main():
-    # Encabezado mejorado con gradiente e iconos
+    # Encabezado mejorado
     st.markdown("""
     <div style='text-align: center; padding: 2rem 0 1rem 0;'>
         <h1 style='font-size: 3rem; margin-bottom: 0.5rem; background: linear-gradient(135deg, #64b5f6 0%, #ba68c8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;'>
-            📊 Vix Term Structure
+            📊 VIX Term Structure
         </h1>
         <p style='font-size: 1.1rem; color: #a0a8c5; font-weight: 500; letter-spacing: 1px;'>
-            Análisis de Volatilidad e Insights de Trading
+            Análisis Avanzado de Volatilidad - Vista Híbrida Mejorada
         </p>
         <div style='width: 100px; height: 3px; background: linear-gradient(90deg, #64b5f6, #ba68c8); margin: 1rem auto; border-radius: 2px;'></div>
     </div>
@@ -944,7 +977,7 @@ def main():
         df = load_data()
         stats_df = calculate_historical_stats(df)
     
-    # Encabezado mejorado de barra lateral
+    # Encabezado de barra lateral
     st.sidebar.markdown("""
     <div style='text-align: center; padding: 1.5rem 0; background: rgba(100, 181, 246, 0.1); border-radius: 15px; margin-bottom: 1rem;'>
         <h2 style='margin: 0; background: linear-gradient(135deg, #64b5f6 0%, #ba68c8 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; font-size: 1.5rem;'>
@@ -972,6 +1005,23 @@ def main():
         st.sidebar.warning(f"Fecha ajustada a la más cercana disponible: {nearest_date.strftime('%Y-%m-%d')}")
         selected_date = nearest_date
     
+    # NUEVA OPCIÓN: Toggle entre vistas
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📊 Modo de Visualización")
+    
+    view_mode = st.sidebar.radio(
+        "Seleccionar eje X:",
+        options=["Días hasta Vencimiento (Recomendado)", "Etiquetas de Contratos"],
+        help="Vista por Días muestra la estructura temporal real y permite cálculos precisos de carry. Vista por Contratos es más limpia visualmente pero oculta información temporal crítica."
+    )
+    
+    use_contract_labels = (view_mode == "Etiquetas de Contratos")
+    
+    if use_contract_labels:
+        st.sidebar.info("⚠️ Nota: Esta vista oculta gaps temporales irregulares entre contratos.")
+    else:
+        st.sidebar.success("✅ Vista recomendada para análisis cuantitativo preciso.")
+    
     # Fechas de comparación
     st.sidebar.markdown("---")
     st.sidebar.subheader("📊 Fechas de Comparación")
@@ -991,7 +1041,7 @@ def main():
     # Opciones de análisis
     st.sidebar.markdown("---")
     st.sidebar.subheader("⚙️ Opciones de Análisis")
-    show_spot_vix = st.sidebar.checkbox("Mostrar Línea de Referencia VIX1", value=True)
+    show_spot_vix = st.sidebar.checkbox("Mostrar Línea de Referencia VIX SPOT", value=True)
     rolling_window = st.sidebar.slider("Ventana Rolling (días)", 10, 100, 20)
     zscore_window = st.sidebar.slider("Ventana Z-Score (días)", 60, 500, 252)
     
@@ -1021,7 +1071,7 @@ def main():
     else:
         current_streak = 0
     
-    # Métricas principales mejoradas con tarjetas de gradiente
+    # Métricas principales
     st.markdown("<br>", unsafe_allow_html=True)
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     
@@ -1103,28 +1153,43 @@ def main():
     st.markdown("---")
     st.markdown("<br>", unsafe_allow_html=True)
     
-    # Encabezado de sección mejorado
+    # Encabezado de sección con información sobre la vista híbrida
     st.markdown("""
     <div style='margin-bottom: 1.5rem;'>
-        <h2 style='display: inline-block; margin: 0; font-size: 1.8rem;'>📈 Curva de Estructura de Términos</h2>
-        <p style='color: #a0a8c5; margin-top: 0.5rem; font-size: 0.95rem;'>Visualiza los precios de futuros VIX a través de diferentes vencimientos</p>
+        <h2 style='display: inline-block; margin: 0; font-size: 1.8rem;'>📈 Curva de Estructura de Términos (Vista Híbrida)</h2>
+        <p style='color: #a0a8c5; margin-top: 0.5rem; font-size: 0.95rem;'>
+            Cada punto muestra: <strong>Contrato (VIX1, VIX2...)</strong> + <strong>% Cambio (días)</strong> + <strong>Información en hover</strong>
+        </p>
     </div>
     """, unsafe_allow_html=True)
     
-    fig_ts = plot_term_structure(df, selected_date, comparison_dates if enable_comparison else None, show_spot_vix)
+    fig_ts = plot_term_structure(df, selected_date, comparison_dates if enable_comparison else None, show_spot_vix, use_contract_labels)
     st.plotly_chart(fig_ts, use_container_width=True)
     
-    # Sección de pestañas mejorada
+    # Mostrar información sobre la vista actual
+    if not use_contract_labels:
+        st.info("""
+        ✅ **Vista Recomendada Activa**: Eje X muestra días hasta vencimiento (temporal real).
+        Las etiquetas de porcentaje incluyen el gap temporal entre contratos, por ejemplo: **+6.43% (20d)** 
+        significa 6.43% de cambio en un período de 20 días. Esto es esencial para cálculos de carry precisos.
+        """)
+    else:
+        st.warning("""
+        ⚠️ **Vista Simplificada Activa**: Eje X muestra contratos ordenados (VIX1, VIX2, VIX3...).
+        Esta vista oculta los gaps temporales irregulares entre contratos. Útil para comparaciones visuales rápidas,
+        pero menos precisa para análisis cuantitativo.
+        """)
+    
+    # Sección de pestañas
     st.markdown("<br>", unsafe_allow_html=True)
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
         "📊 Spread Histórico",
         "🎯 Análisis de Distribución",
         "📉 Roll Yield",
         "🔬 Análisis Z-Score",
         "📅 Vista de Calendario",
         "🌡️ Estacionalidad",
-        "🚨 Días Extremos",
-        "💰 Simulador VXX"
+        "🚨 Días Extremos"
     ])
     
     with tab1:
@@ -1348,105 +1413,6 @@ def main():
         
         if st.button("🚀 Ir a Esta Fecha"):
             st.info(f"Actualiza la fecha en la barra lateral a: {selected_extreme}")
-    
-    with tab8:
-        st.subheader("💰 Simulador de Rendimiento VXX")
-        st.markdown("""
-        Simula cómo habría funcionado una inversión en VXX usando el carry diario histórico de tu base de datos.
-        VXX típicamente pierde valor en contango y gana en backwardation.
-        """)
-        
-        col1, col2, col3 = st.columns(3)
-        
-        with col1:
-            sim_start = st.date_input(
-                "Fecha de Inicio",
-                value=(max_date - timedelta(days=365)).date(),
-                min_value=available_dates[0].date(),
-                max_value=max_date.date(),
-                key="sim_start"
-            )
-        
-        with col2:
-            sim_end = st.date_input(
-                "Fecha de Fin",
-                value=max_date.date(),
-                min_value=available_dates[0].date(),
-                max_value=max_date.date(),
-                key="sim_end"
-            )
-        
-        with col3:
-            initial_investment = st.number_input(
-                "Inversión Inicial ($)",
-                min_value=1000,
-                max_value=1000000,
-                value=10000,
-                step=1000
-            )
-        
-        if st.button("▶️ Ejecutar Simulación"):
-            with st.spinner("Calculando rendimiento..."):
-                sim_df = simulate_vxx_performance(
-                    df, 
-                    pd.to_datetime(sim_start), 
-                    pd.to_datetime(sim_end),
-                    initial_investment
-                )
-                
-                if len(sim_df) > 0:
-                    # Gráfico
-                    fig_sim = plot_vxx_simulation(sim_df)
-                    st.plotly_chart(fig_sim, use_container_width=True)
-                    
-                    # Métricas de rendimiento
-                    final_value = sim_df['value'].iloc[-1]
-                    total_return = ((final_value / initial_investment) - 1) * 100
-                    max_value = sim_df['value'].max()
-                    min_value = sim_df['value'].min()
-                    max_drawdown = ((min_value / max_value) - 1) * 100
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    
-                    with col1:
-                        st.metric(
-                            "Valor Final",
-                            f"${final_value:,.2f}",
-                            f"{total_return:+.2f}%"
-                        )
-                    
-                    with col2:
-                        st.metric(
-                            "Retorno Total",
-                            f"{total_return:.2f}%"
-                        )
-                    
-                    with col3:
-                        st.metric(
-                            "Valor Máximo",
-                            f"${max_value:,.2f}"
-                        )
-                    
-                    with col4:
-                        st.metric(
-                            "Caída Máxima",
-                            f"{max_drawdown:.2f}%"
-                        )
-                    
-                    st.markdown(f"""
-                    ### 📊 Resumen de Simulación
-                    
-                    - **Período**: {sim_start} a {sim_end}
-                    - **Días**: {len(sim_df) - 1} días de trading
-                    - **Inversión Inicial**: ${initial_investment:,.2f}
-                    - **Valor Final**: ${final_value:,.2f}
-                    - **Ganancia/Pérdida**: ${final_value - initial_investment:,.2f}
-                    
-                    ⚠️ **Nota**: Esta simulación usa el carry diario histórico como proxy para el rendimiento de VXX.
-                    Los resultados reales pueden variar debido a factores como rebalanceo de ETF, costos de gestión y slippage.
-                    """)
-                else:
-                    st.warning("No hay suficientes datos para el rango de fechas seleccionado.")
     
     # Exportar sección de datos
     st.markdown("---")
